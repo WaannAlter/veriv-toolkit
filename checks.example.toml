@@ -1,0 +1,8 @@
+# Run with: cargo run -- run --config checks.example.toml --report reports/example.json
+[[commands]]
+name = "Rust toolchain"
+group = "local"
+component = "tooling"
+suite = "smoke"
+argv = ["cargo", "--version"]
+timeout = 10

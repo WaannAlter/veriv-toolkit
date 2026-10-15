@@ -1,0 +1,17 @@
+# Start the synthetic Container Workflow service first, bound to 127.0.0.1:8080.
+[[http]]
+name = "Hello service health"
+group = "hello"
+suite = "smoke"
+url = "http://127.0.0.1:8080/health"
+status = 200
+body_contains = '"status": "ok"'
+timeout = 5
+
+[[tcp]]
+name = "Hello service port"
+group = "hello"
+suite = "smoke"
+host = "127.0.0.1"
+port = 8080
+timeout = 5

@@ -1,0 +1,9 @@
+.git
+.github
+target
+reports
+**/__pycache__
+.env
+.env.*
+*.pem
+*.key
