@@ -4,8 +4,8 @@ use command_group::CommandGroup;
 use reqwest::{Url, blocking::Client, redirect::Policy};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
-use std::fs;
-use std::io::Read;
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -450,13 +450,9 @@ fn run_command(check: &CommandCheck, base: &Path) -> CheckResult {
         }
         // The leader may exit after starting descendants that close their output pipes.
         let _ = stop_group(child);
-        let text = streams
-            .iter()
-            .map(|v| String::from_utf8_lossy(v))
-            .collect::<Vec<_>>()
-            .join("\n");
-        if !status.expect("checked above").success() {
-            return Err(format!("command failed: {}", tail(&text, 4_000)));
+        let status = status.expect("checked above");
+        if !status.success() {
+            return Err(format!("command failed with status {status}"));
         }
         if let Some(relative) = &check.coverage_file {
             let path = safe_child(&cwd, relative)?;
@@ -598,21 +594,18 @@ fn safe_child(base: &Path, relative: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-fn tail(value: &str, limit: usize) -> String {
-    value
-        .chars()
-        .rev()
-        .take(limit)
-        .collect::<String>()
-        .chars()
-        .rev()
-        .collect()
-}
-
 pub fn write_report(path: &Path, report: &Report) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let json = serde_json::to_string_pretty(report).map_err(|e| e.to_string())?;
-    fs::write(path, format!("{json}\n")).map_err(|e| e.to_string())
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).map_err(|e| e.to_string())?;
+    writeln!(file, "{json}").map_err(|e| e.to_string())
 }

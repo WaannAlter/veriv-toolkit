@@ -46,7 +46,8 @@ fn fixture_process() {
     match mode.as_str() {
         "pass" => println!("passed"),
         "fail" => {
-            eprintln!("synthetic failure");
+            println!("private stdout sentinel");
+            eprintln!("private stderr sentinel");
             std::process::exit(7);
         }
         "timeout" => thread::sleep(Duration::from_secs(5)),
@@ -116,7 +117,74 @@ fn command_pass_failure_filters_and_report() {
     let fail = command_profile("fail", 3, "");
     let report = runner::run(&fail, &Filter::default()).unwrap();
     assert_eq!(report.failed, 1);
-    assert!(report.results[0].detail.contains("synthetic failure"));
+    assert!(
+        report.results[0]
+            .detail
+            .contains("command failed with status")
+    );
+    assert!(report.results[0].detail.contains('7'));
+    let serialized = serde_json::to_string(&report).unwrap();
+    assert!(!serialized.contains("private stdout sentinel"));
+    assert!(!serialized.contains("private stderr sentinel"));
+    let report_path = fail.with_file_name("failed-report.json");
+    runner::write_report(&report_path, &report).unwrap();
+    let saved = fs::read_to_string(&report_path).unwrap();
+    assert!(!saved.contains("private stdout sentinel"));
+    assert!(!saved.contains("private stderr sentinel"));
+    let cli = Command::new(env!("CARGO_BIN_EXE_veriv-toolkit"))
+        .args(["run", "--config", fail.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_eq!(cli.status.code(), Some(1));
+    assert!(!String::from_utf8_lossy(&cli.stdout).contains("private stdout sentinel"));
+    assert!(!String::from_utf8_lossy(&cli.stdout).contains("private stderr sentinel"));
+}
+
+#[test]
+fn report_refuses_existing_target_without_changing_it() {
+    let profile = command_profile("pass", 3, "");
+    let report = runner::run(&profile, &Filter::default()).unwrap();
+    let target = profile.with_file_name("report.json");
+    fs::write(&target, "keep this").unwrap();
+    assert!(runner::write_report(&target, &report).is_err());
+    assert_eq!(fs::read_to_string(&target).unwrap(), "keep this");
+}
+
+#[test]
+fn report_refuses_symlink_target_without_changing_destination() {
+    let profile = command_profile("pass", 3, "");
+    let report = runner::run(&profile, &Filter::default()).unwrap();
+    let destination = profile.with_file_name("destination.json");
+    let link = profile.with_file_name("report.json");
+    fs::write(&destination, "keep this").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&destination, &link).unwrap();
+    #[cfg(windows)]
+    if let Err(error) = std::os::windows::fs::symlink_file(&destination, &link) {
+        if error.kind() == std::io::ErrorKind::PermissionDenied
+            || error.raw_os_error() == Some(1314)
+        {
+            return;
+        }
+        panic!("cannot create test symlink: {error}");
+    }
+    assert!(runner::write_report(&link, &report).is_err());
+    assert_eq!(fs::read_to_string(&destination).unwrap(), "keep this");
+}
+
+#[cfg(unix)]
+#[test]
+fn report_is_owner_only_on_unix() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let profile = command_profile("pass", 3, "");
+    let report = runner::run(&profile, &Filter::default()).unwrap();
+    let target = profile.with_file_name("report.json");
+    runner::write_report(&target, &report).unwrap();
+    assert_eq!(
+        fs::metadata(&target).unwrap().permissions().mode() & 0o077,
+        0
+    );
 }
 
 #[test]
